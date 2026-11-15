@@ -59,10 +59,10 @@ Preços de venda (padrão R$ 50,00 e R$ 30,00) são editáveis em **Gestão → 
 
 O cliente informa o e-mail e recebe um link (válido por 2 horas, uso único) para criar uma nova senha.
 A resposta é sempre a mesma, exista ou não o e-mail, para não revelar quem tem cadastro.
-O envio usa o **Resend** pelo domínio `kaibez.com.br` (SMTP `smtp.resend.com:587`, usuário `resend`).
+O envio usa o **Resend** pelo domínio `kaibez.com.br` pela API HTTPS `https://api.resend.com/emails`.
 Configure no `backend/.env`:
 
-- `EMAIL_SENHA`: a API key do Resend (`re_...`). Vazio = o e-mail só aparece no terminal do Django.
+- `EMAIL_SENHA`: a API key do Resend (`re_...`). Vazio = e-mail no terminal em desenvolvimento; em produção, mensagens são descartadas.
 - `EMAIL_REMETENTE`: padrão `Despachante Digital <nao-responda@kaibez.com.br>` (precisa ser do domínio verificado).
 - `SUPORTE_EMAIL`: contato exibido na tela e no e-mail (vira também o "responder para").
 - `FRONTEND_URL`: domínio usado no link do e-mail (em produção, o seu domínio real).

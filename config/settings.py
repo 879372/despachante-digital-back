@@ -199,8 +199,8 @@ try:  # Python do macOS (python.org) não acha os certificados raiz do sistema
 except ImportError:  # pragma: no cover
     pass
 if env("EMAIL_SENHA"):
-    # Resend via SMTP: usuário "resend" e a API key (re_...) como senha
-    EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+    # HTTPS evita depender de conexões SMTP de saída na hospedagem.
+    EMAIL_BACKEND = "core.email_backend.ResendBackend"
     EMAIL_HOST = env("EMAIL_HOST", "smtp.resend.com")
     EMAIL_PORT = int(env("EMAIL_PORT", "587"))
     EMAIL_HOST_USER = env("EMAIL_USUARIO", "resend")
