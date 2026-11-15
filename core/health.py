@@ -6,7 +6,7 @@ def health(request):
     """Readiness check without exposing connection details."""
     try:
         with connection.cursor() as cursor:
-            cursor.execute("SELECT 1")
+            cursor.execute("SELECT 1 FROM core_servico LIMIT 1")
             cursor.fetchone()
     except Exception:
         return JsonResponse({"status": "unavailable"}, status=503)

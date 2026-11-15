@@ -200,7 +200,7 @@ python manage.py test core
 
 ## Railway
 
-O serviço `API` acompanha a branch `main`, usa o `Dockerfile`, aplica migrações antes do deploy e verifica `/api/health/` (inclui conexão com o banco). WhiteNoise serve `/static/` da administração.
+O serviço `API` acompanha a branch `main` e usa o `Dockerfile`. Nas configurações do serviço Railway: pre-deploy `python manage.py migrate --noinput`, healthcheck `/api/health/` com timeout de 120 segundos e reinício `ON_FAILURE` com até 5 tentativas. O healthcheck verifica o acesso à tabela de serviços. WhiteNoise serve `/static/` da administração. As configurações de deploy são definidas diretamente no serviço; serviços novos não usam `railway.json`.
 
 Conexões por referências do Railway:
 
