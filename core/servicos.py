@@ -389,7 +389,9 @@ def _emitir_pedido_pago(cobranca_id):
     from .models import Cobranca
 
     with transaction.atomic():
-        c = Cobranca.objects.select_for_update().select_related("usuario", "servico").get(pk=cobranca_id)
+        # PostgreSQL não permite bloquear o lado opcional de um LEFT OUTER JOIN.
+        # Só a cobrança precisa do bloqueio para impedir emissão duplicada.
+        c = Cobranca.objects.select_for_update(of=("self",)).select_related("usuario", "servico").get(pk=cobranca_id)
         if c.tipo == Cobranca.Tipo.PUBLICO and c.status == Cobranca.Status.PAGA and not c.pedido_id:
             if "menor" in c.mensagem:
                 return c

@@ -571,6 +571,16 @@ class PagamentoTeste(TestCase):
         self.assertEqual(lista[0]["usuario"], "Paula Gomes")
         self.assertEqual(lista[0]["status"], "PENDENTE")
 
+    def test_recarga_confirmada_sem_servico_pode_ser_reconsultada(self):
+        with mock.patch("core.integracao.infinitepay.requests.post", side_effect=self.falso_post()):
+            cid = self.api.post("/api/pagamentos/recarga/", {"valor_centavos": 2000}, format="json").data["id"]
+            for _ in range(2):
+                r = self.api.post(f"/api/pagamentos/{cid}/", {"slug": "s", "transaction_nsu": "t"}, format="json")
+                self.assertEqual(r.status_code, 200)
+                self.assertEqual(r.data["status"], "PAGA")
+                self.assertIsNone(r.data["pedido_id"])
+        self.assertEqual(Movimentacao.objects.filter(usuario=self.u, tipo="PAGAMENTO").count(), 1)
+
     def test_amount_menor_credita_so_o_pago(self):
         with mock.patch("core.integracao.infinitepay.requests.post", side_effect=self.falso_post()):
             cid = self.api.post("/api/pagamentos/recarga/", {"valor_centavos": 5000}, format="json").data["id"]
