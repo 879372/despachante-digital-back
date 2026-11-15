@@ -39,6 +39,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -207,8 +208,9 @@ if env("EMAIL_SENHA"):
     EMAIL_USE_TLS = EMAIL_PORT == 587
     EMAIL_USE_SSL = EMAIL_PORT == 465
 else:
-    # Sem a chave configurada, o e-mail é impresso no terminal do Django (dev).
-    EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+    # Links privados só aparecem no terminal em desenvolvimento.
+    EMAIL_BACKEND = ("django.core.mail.backends.console.EmailBackend" if DEBUG
+                     else "django.core.mail.backends.dummy.EmailBackend")
 PASSWORD_RESET_TIMEOUT = 60 * 60 * 2  # link vale 2 horas
 
 LOGGING = {

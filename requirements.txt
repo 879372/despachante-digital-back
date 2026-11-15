@@ -8,3 +8,4 @@ psycopg[binary]>=3.2  # opcional, para PostgreSQL em produção
 certifi>=2024.2
 django-storages[s3]>=1.14
 boto3>=1.34
+whitenoise>=6.8,<7
