@@ -197,3 +197,24 @@ Contingência (cron a cada 15 min):
 ```bash
 python manage.py test core
 ```
+
+## Railway
+
+O serviço `API` acompanha a branch `main`, usa o `Dockerfile`, aplica migrações antes do deploy e verifica `/api/health/` (inclui conexão com o banco). WhiteNoise serve `/static/` da administração.
+
+Conexões por referências do Railway:
+
+- `DATABASE_URL=${{Postgres.DATABASE_URL}}`
+- `S3_BUCKET=${{Arquivos.BUCKET}}`
+- `S3_ENDPOINT=${{Arquivos.ENDPOINT}}`
+- `S3_REGIAO=${{Arquivos.REGION}}`
+- `S3_ACCESS_KEY=${{Arquivos.ACCESS_KEY_ID}}`
+- `S3_SECRET_KEY=${{Arquivos.SECRET_ACCESS_KEY}}`
+
+Configure `DJANGO_DEBUG=0`, uma `DJANGO_SECRET_KEY` aleatória, `DJANGO_ALLOWED_HOSTS` com o domínio da API e `healthcheck.railway.app`, `FRONTEND_URL`, `CORS_ORIGINS` e `CSRF_TRUSTED_ORIGINS` com os domínios HTTPS corretos.
+
+Credenciais externas: `FONTE_API_KEY`, `FONTE_WEBHOOK_SECRET`, `INFINITEPAY_HANDLE`, `INFINITEPAY_API_KEY` e `EMAIL_SENHA`. Sem credenciais de e-mail, produção descarta mensagens para não registrar links privados nos logs. `SUPORTE_EMAIL` é opcional.
+
+O frontend usa `/api/` relativo: seu hosting precisa encaminhar esse caminho para a API Railway. Configure o callback do fornecedor em `/api/retorno/<WEBHOOK_TOKEN_ROTA>/`; a URL da InfinitePay é incluída automaticamente nos checkouts.
+
+Após o deploy, valide o bucket com `python manage.py testar_storage` dentro do container. Agende `python manage.py sincronizar_pedidos` a cada 15 minutos como contingência dos webhooks.
