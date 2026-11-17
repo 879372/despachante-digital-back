@@ -78,7 +78,7 @@ def pagar_bonus_indicacao(indicado_id):
 
 # --- Pedidos ----------------------------------------------------------------
 
-def criar_pedido(usuario, servico, placa, cliente=None):
+def criar_pedido(usuario, servico, placa, cliente=None, dados=None):
     placa = normalizar_placa(placa)
     with transaction.atomic():
         u = Usuario.objects.select_for_update().get(pk=usuario.pk)
@@ -91,6 +91,7 @@ def criar_pedido(usuario, servico, placa, cliente=None):
             valor_centavos=servico.preco_centavos,
             chave_idempotencia=f"ped-{uuid.uuid4().hex}",
             mensagem="Solicitação recebida.",
+            dados_entrada=dados,
         )
         _movimentar(u, Movimentacao.Tipo.DEBITO, -servico.preco_centavos, f"{servico.nome} · {placa}", pedido)
 
@@ -101,6 +102,8 @@ def criar_pedido(usuario, servico, placa, cliente=None):
 
 def enviar_pedido(pedido, cliente=None):
     """Envia (ou reenvia, com a mesma chave de idempotência) para a fonte."""
+    if pedido.servico.fonte == pedido.servico.Fonte.COMUNICADO:
+        return _enviar_comunicado(pedido, cliente)
     cliente = cliente or ClienteFonte()
     servico = pedido.servico
     Pedido.objects.filter(pk=pedido.pk).update(tentativas_envio=pedido.tentativas_envio + 1)
@@ -219,6 +222,9 @@ def _finalizar_com_falha(pedido_id, mensagem, status="FALHA", cobrado=False):
         pedido = Pedido.objects.select_for_update().get(pk=pedido_id)
         if not pedido.aberto:
             return pedido
+        if pedido.servico.fonte == pedido.servico.Fonte.COMUNICADO:
+            from .comunicado import sem_segredos
+            pedido.dados_entrada = sem_segredos(pedido.dados_entrada)
         pedido.status = Pedido.Status.SEM_RESULTADO if status == "SEM_RESULTADO" else Pedido.Status.FALHA
         pedido.cobrado_fonte = cobrado
         pedido.mensagem = mensagem
@@ -243,6 +249,8 @@ def sincronizar_pedido(pedido, cliente=None, forcar=False):
         return pedido
     if not forcar and pedido.ultima_verificacao and timezone.now() - pedido.ultima_verificacao < timedelta(minutes=1):
         return pedido
+    if pedido.servico.fonte == pedido.servico.Fonte.COMUNICADO:
+        return _sincronizar_comunicado(pedido)
     cliente = cliente or ClienteFonte()
 
     if not pedido.protocolo_fonte:
@@ -265,7 +273,7 @@ def sincronizar_abertos(cliente=None, limite=200):
     cliente = cliente or ClienteFonte()
     total = 0
     for pedido in Pedido.objects.filter(status__in=Pedido.ABERTOS).select_related("servico")[:limite]:
-        sincronizar_pedido(pedido, cliente, forcar=True)
+        sincronizar_pedido(pedido, None if pedido.servico.fonte == pedido.servico.Fonte.COMUNICADO else cliente, forcar=True)
         total += 1
     return total
 
@@ -280,7 +288,7 @@ def valor_a_pagar(usuario, servico):
     return 0 if falta <= 0 else max(falta, MINIMO_CENTAVOS)
 
 
-def iniciar_checkout_pedido(usuario, servico, placa):
+def iniciar_checkout_pedido(usuario, servico, placa, dados=None):
     from .models import Cobranca
 
     placa = normalizar_placa(placa)
@@ -289,7 +297,7 @@ def iniciar_checkout_pedido(usuario, servico, placa):
     if valor == 0:
         raise ValueError("Você já tem saldo suficiente para esta consulta.")
     cobranca = Cobranca.objects.create(usuario=usuario, tipo=Cobranca.Tipo.PEDIDO, valor_centavos=valor,
-                                       servico=servico, placa=placa)
+                                       servico=servico, placa=placa, dados_entrada=dados)
     descricao = f"{servico.nome} - placa {placa}" if valor >= servico.preco_centavos else f"{servico.nome} - placa {placa} (complemento)"
     return _gerar_link(cobranca, descricao)
 
@@ -398,7 +406,8 @@ def _emitir_pedido_pago(cobranca_id):
             pedido = _criar_pedido_publico(c)
             c.pedido = pedido
             c.mensagem = "Pagamento confirmado e consulta solicitada."
-            c.save(update_fields=["pedido", "mensagem"])
+            c.dados_entrada = None
+            c.save(update_fields=["pedido", "mensagem", "dados_entrada"])
             return c
         if c.tipo != Cobranca.Tipo.PEDIDO or c.status != Cobranca.Status.PAGA or c.pedido_id:
             return c
@@ -407,14 +416,15 @@ def _emitir_pedido_pago(cobranca_id):
             c.save(update_fields=["mensagem"])
             return c
         try:
-            pedido = criar_pedido(c.usuario, c.servico, c.placa)
+            pedido = criar_pedido(c.usuario, c.servico, c.placa, dados=c.dados_entrada)
         except (SaldoInsuficiente, ValueError) as exc:
             c.mensagem = f"Pagamento confirmado e creditado no saldo, mas a consulta não foi feita: {exc}"
             c.save(update_fields=["mensagem"])
             return c
         c.pedido = pedido
         c.mensagem = "Pagamento confirmado e consulta solicitada."
-        c.save(update_fields=["pedido", "mensagem"])
+        c.dados_entrada = None  # o pedido guarda o formulário a partir daqui
+        c.save(update_fields=["pedido", "mensagem", "dados_entrada"])
         return c
 
 
@@ -432,7 +442,7 @@ def sincronizar_cobrancas(limite=100):
 
 # --- Site público (cliente final, sem login) ----------------------------------
 
-def iniciar_checkout_publico(servico, placa, nome, email, telefone):
+def iniciar_checkout_publico(servico, placa, nome, email, telefone, dados=None):
     import secrets
 
     from .models import Cobranca
@@ -443,7 +453,7 @@ def iniciar_checkout_publico(servico, placa, nome, email, telefone):
     cobranca = Cobranca.objects.create(
         tipo=Cobranca.Tipo.PUBLICO, valor_centavos=servico.preco_publico_centavos, servico=servico, placa=placa,
         comprador_nome=nome, comprador_email=email, comprador_telefone=telefone,
-        token_acesso=secrets.token_urlsafe(32),
+        token_acesso=secrets.token_urlsafe(32), dados_entrada=dados,
     )
     return _gerar_link(cobranca, f"{servico.nome} - placa {placa}")
 
@@ -458,6 +468,7 @@ def _criar_pedido_publico(cobranca):
         comprador_email=cobranca.comprador_email,
         comprador_telefone=cobranca.comprador_telefone,
         token_acesso=cobranca.token_acesso,
+        dados_entrada=cobranca.dados_entrada,
         chave_idempotencia=f"pub-{uuid.uuid4().hex}",
         mensagem="Pagamento confirmado. Consulta em andamento.",
     )
@@ -490,3 +501,150 @@ def marcar_reembolsado(pedido_id):
     pedido.mensagem = "Não foi possível concluir. O valor foi estornado."
     pedido.save(update_fields=["reembolso_pendente", "reembolsado_em", "mensagem"])
     return pedido
+
+
+# --- Comunicado de venda (segunda fonte) -----------------------------------------
+
+def _url_notificacao_comunicado(pedido):
+    cfg = settings.CARVEN
+    if not cfg["WEBHOOK_BASE"] or not cfg["WEBHOOK_TOKEN"]:
+        return ""
+    return f"{cfg['WEBHOOK_BASE'].rstrip('/')}/api/comunicado/retorno/{cfg['WEBHOOK_TOKEN']}/{pedido.pk}/"
+
+
+@transaction.atomic
+def _enviar_comunicado(pedido, cliente=None):
+    """Insere (se ainda não tem protocolo) e transmite. Pode ser chamado de novo com segurança."""
+    from .comunicado import montar_payload, sem_segredos
+    from .integracao.carven import ClienteComunicado, ErroComunicado
+
+    cli = cliente or ClienteComunicado()
+    pedido = Pedido.objects.select_for_update().select_related("servico").get(pk=pedido.pk)
+    if not pedido.aberto or pedido.envio_incerto:
+        return
+    if pedido.enviado:
+        return _verificar_comunicado(pedido.pk, cli)
+    Pedido.objects.filter(pk=pedido.pk).update(tentativas_envio=pedido.tentativas_envio + 1)
+    try:
+        if not pedido.protocolo_fonte:
+            if not pedido.dados_entrada:
+                _finalizar_com_falha(pedido.pk, "Dados do comunicado ausentes.")
+                return
+            payload = montar_payload(pedido.dados_entrada, pedido.placa, _url_notificacao_comunicado(pedido))
+            protocolo, bloqueada = cli.inserir(payload)
+            Pedido.objects.filter(pk=pedido.pk).update(protocolo_fonte=protocolo[:80])
+            if bloqueada:
+                Pedido.objects.filter(pk=pedido.pk).update(
+                    status=Pedido.Status.PROCESSANDO, ultima_verificacao=timezone.now(),
+                    mensagem="Comunicação registrada e aguardando liberação do órgão.")
+                return
+            pedido.protocolo_fonte = protocolo
+        cli.transmitir(pedido.protocolo_fonte)
+    except ErroComunicado as erro:
+        pedido.refresh_from_db()
+        if erro.temporario and not pedido.protocolo_fonte and not erro.nao_enviado:
+            # A API não documenta chave de idempotência nem consulta por placa.
+            # Um timeout/5xx pode ocorrer depois de a inserção ter sido aceita.
+            Pedido.objects.filter(pk=pedido.pk).update(
+                envio_incerto=True, status=Pedido.Status.PROCESSANDO,
+                ultima_verificacao=timezone.now(),
+                mensagem="Envio sem confirmação. Nossa equipe precisa conferir o registro antes de tentar novamente.")
+            return
+        if erro.temporario:
+            if erro.nao_enviado and not pedido.protocolo_fonte and pedido.tentativas_envio >= MAX_TENTATIVAS_ENVIO:
+                _finalizar_com_falha(pedido.pk, "Não foi possível conectar ao serviço de comunicação de venda.")
+                return
+            Pedido.objects.filter(pk=pedido.pk).update(
+                ultima_verificacao=timezone.now(), mensagem="Aguardando processamento. Tentaremos novamente.")
+            return
+        Pedido.objects.filter(pk=pedido.pk).update(dados_entrada=sem_segredos(pedido.dados_entrada))
+        _finalizar_com_falha(pedido.pk, erro.mensagem_publica)
+        return
+
+    pedido.refresh_from_db()
+    Pedido.objects.filter(pk=pedido.pk).update(
+        enviado=True, status=Pedido.Status.PROCESSANDO, ultima_verificacao=timezone.now(),
+        mensagem="Comunicação enviada ao órgão. Aguardando confirmação.",
+        dados_entrada=sem_segredos(pedido.dados_entrada),
+    )
+    _verificar_comunicado(pedido.pk, cli)
+
+
+def _sincronizar_comunicado(pedido):
+    from .integracao.carven import ClienteComunicado
+
+    cli = ClienteComunicado()
+    if pedido.envio_incerto:
+        return pedido
+    if not pedido.protocolo_fonte or not pedido.enviado:
+        # sem protocolo: inserir; com protocolo e sem transmissão: transmitir (ou esperar liberação)
+        if pedido.protocolo_fonte:
+            return _verificar_comunicado(pedido.pk, cli, transmitir_se_cadastrada=True)
+        _enviar_comunicado(pedido, cli)
+        pedido.refresh_from_db()
+        return pedido
+    return _verificar_comunicado(pedido.pk, cli)
+
+
+def _verificar_comunicado(pedido_id, cli, transmitir_se_cadastrada=False):
+    from .integracao import carven
+
+    pedido = Pedido.objects.select_related("servico").get(pk=pedido_id)
+    if not pedido.aberto:
+        return pedido
+    try:
+        dados = cli.detalhes(pedido.protocolo_fonte)
+    except carven.ErroComunicado as erro:
+        log.warning("Comunicado %s: falha ao consultar situação: %s", pedido.pk, erro.interno)
+        Pedido.objects.filter(pk=pedido.pk).update(ultima_verificacao=timezone.now())
+        pedido.refresh_from_db()
+        return pedido
+
+    codigo, erro_txt = carven.situacao(dados)
+    if codigo in (carven.COMUNICADA, carven.CERTIDAO):
+        return _concluir_comunicado(pedido, cli, codigo)
+    if codigo in (carven.CANCELADA, carven.ERRO, carven.EXCLUIDA, carven.NAO_DESBLOQUEADA) or (
+            codigo == carven.CADASTRADA and erro_txt and pedido.enviado):
+        motivo = erro_txt or carven.SITUACOES.get(codigo, "")
+        return _finalizar_com_falha(pedido.pk, f"O órgão recusou a comunicação: {motivo[:135]}." if motivo
+                                    else "O órgão recusou a comunicação.")
+    if codigo == carven.CADASTRADA and transmitir_se_cadastrada and not pedido.enviado:
+        _enviar_comunicado(pedido, cli)
+        pedido.refresh_from_db()
+        return pedido
+    mensagem = ("Comunicação registrada e aguardando liberação do órgão." if codigo == carven.BLOQUEADA
+                else "Comunicação enviada ao órgão. Aguardando confirmação.")
+    Pedido.objects.filter(pk=pedido.pk).update(ultima_verificacao=timezone.now(), status=Pedido.Status.PROCESSANDO,
+                                               mensagem=mensagem)
+    pedido.refresh_from_db()
+    return pedido
+
+
+def _concluir_comunicado(pedido, cli, codigo):
+    from .integracao import carven
+
+    try:
+        pdf = cli.comprovante(pedido.protocolo_fonte)
+    except carven.ErroComunicado as erro:
+        log.warning("Comunicado %s: comprovante indisponível: %s", pedido.pk, erro.interno)
+        Pedido.objects.filter(pk=pedido.pk).update(
+            ultima_verificacao=timezone.now(), mensagem="Venda comunicada. Gerando o comprovante.")
+        pedido.refresh_from_db()
+        return pedido
+    with transaction.atomic():
+        p = Pedido.objects.select_for_update().select_related("servico").get(pk=pedido.pk)
+        if not p.aberto:
+            return p
+        from .comunicado import sem_segredos
+        p.dados_entrada = sem_segredos(p.dados_entrada)
+        if pdf:
+            p.documento.save(f"{p.servico.codigo}-{p.placa}-{p.pk.hex[:8]}.pdf", ContentFile(pdf), save=False)
+        p.resultado = {"protocolo": p.protocolo_fonte, "situacao": carven.SITUACOES.get(codigo, "Comunicada"),
+                       "comunicado_em": timezone.localtime().strftime("%d/%m/%Y %H:%M")}
+        p.status = Pedido.Status.SUCESSO
+        p.mensagem = "Venda comunicada ao órgão de trânsito. Comprovante disponível."
+        p.ultima_verificacao = timezone.now()
+        p.save()
+        if p.origem == Pedido.Origem.PUBLICO:
+            transaction.on_commit(lambda: notificar_publico(p.pk))
+    return p

@@ -1,9 +1,11 @@
 from django.urls import path
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
-from . import chat, conta, pagamentos, publico, views
+from . import comunicado, chat, conta, pagamentos, publico, views
 
 urlpatterns = [
+    path("cep/<str:valor>/", comunicado.cep),
+    path("comunicado/retorno/<str:token>/<uuid:pk>/", comunicado.retorno),
     path("auth/token/", TokenObtainPairView.as_view()),
     path("auth/refresh/", TokenRefreshView.as_view()),
     path("auth/cadastro/", conta.cadastro),

@@ -81,7 +81,7 @@ class PedidosView(generics.ListAPIView):
         ser = NovoPedidoSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
         try:
-            pedido = servicos.criar_pedido(request.user, ser.validated_data["servico"], ser.validated_data["placa"])
+            pedido = servicos.criar_pedido(request.user, ser.validated_data["servico"], ser.validated_data["placa"], dados=ser.validated_data.get("dados"))
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         except servicos.SaldoInsuficiente as exc:

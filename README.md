@@ -218,3 +218,80 @@ Credenciais externas: `FONTE_API_KEY`, `FONTE_WEBHOOK_SECRET`, `INFINITEPAY_HAND
 O frontend usa `/api/` relativo: seu hosting precisa encaminhar esse caminho para a API Railway. Configure o callback do fornecedor em `/api/retorno/<WEBHOOK_TOKEN_ROTA>/`; a URL da InfinitePay é incluída automaticamente nos checkouts.
 
 Após o deploy, valide o bucket com `python manage.py testar_storage` dentro do container. Agende `python manage.py sincronizar_pedidos` a cada 15 minutos como contingência dos webhooks.
+
+## Comunicado de venda
+
+Implementado no painel e no site público, usando a API Carven v1.08:
+<https://www.carven.com.br/docs/api>. O navegador envia o formulário em `dados` junto
+com `servico` e `placa`; a API valida antes de debitar saldo ou gerar checkout.
+O catálogo identifica o formulário com `formulario: COMUNICADO_VENDA`.
+
+Para disponibilizar:
+
+1. Configure `CARVEN_API_URL`, `CARVEN_CLIENT_ID` e `CARVEN_CLIENT_SECRET` no backend.
+   Para homologação use `https://homologacao.carven.com.br/api` e as credenciais de
+   teste publicadas na documentação. Nunca coloque credenciais no frontend.
+2. Aplique as migrations revisadas (`python manage.py migrate`). A migration 0012
+   cria `comunicado-venda` desativado, com preço zero; a 0013 registra envios incertos.
+3. Defina os preços e ative os canais desejados em Gestão → Serviços e preços.
+4. Opcionalmente configure `CARVEN_WEBHOOK_BASE` com a URL HTTPS do backend e
+   `CARVEN_WEBHOOK_TOKEN` com um segredo aleatório. A URL por pedido é enviada na
+   inserção. O retorno só dispara uma consulta autenticada; o corpo recebido não é
+   usado como confirmação de sucesso. Sem webhook, execute
+   `python manage.py sincronizar_pedidos` periodicamente, como nos demais serviços.
+
+O formulário aceita até dois anexos DUT/CRV/ATPV-e de 5 MB cada (PDF, JPG ou PNG).
+Alguns informantes exigem os anexos; a Carven recusa a transmissão quando ausentes.
+O limite JSON do Django é 15 MB para comportar base64; configure também o proxy,
+caso exista. Código de segurança e anexos são removidos após transmissão ou falha
+final. Cobranças pendentes mantêm os dados necessários até a confirmação.
+
+Fluxo: inserir → guardar protocolo → transmitir → consultar situação → baixar PDF.
+A situação Bloqueada aguarda liberação; comunicação concluída sem PDF disponível
+continua aguardando o comprovante, sem estorno prematuro. `ultimo_erro` é lido na
+raiz da resposta, conforme a documentação. Conclusão depende do órgão de trânsito.
+
+Em timeout/5xx da inserção, não há confirmação de que o cadastro foi aceito e a API
+não documenta chave de idempotência. O pedido fica em processamento com
+`envio_incerto=True`, sem nova inserção automática nem estorno. Confira o registro
+no painel Carven. Se encontrar o protocolo correspondente, execute:
+
+```bash
+python manage.py reconciliar_comunicado UUID_DO_PEDIDO PROTOCOLO_CONFERIDO
+```
+
+O comando confere placa, Renavam, comprador e vendedor, vincula o protocolo sem
+transmitir e libera a próxima sincronização. Se não houver registro, a decisão de
+reenvio ou estorno exige conferência operacional; não limpe o indicador sem essa
+conferência. O indicador pode ser consultado no Django Admin.
+
+Os endpoints de alteração, cancelamento, certidão e RENAVE não fazem parte da
+contratação de um novo comunicado; não são expostos como ações de compra.
+
+Validação local (banco de testes separado, sem chamadas reais à Carven):
+
+```bash
+python manage.py test core
+python manage.py check
+python manage.py makemigrations --check --dry-run
+```
+
+### Verificação da homologação em 17/11/2026
+
+A documentação também está acessível em <https://hml.carven.com.br/docs/>.
+Ela continua publicando `https://homologacao.carven.com.br/api` como URL base.
+Não substitua o endpoint de produção nem envie chaves de produção para o host HML.
+No teste autorizado de login com credenciais públicas em
+`https://hml.carven.com.br/api/auth/login`, a resposta foi HTTP 302 (HTML), com
+`Server: WAF`, em vez de JSON/JWT. É necessário confirmar a URL efetiva da API e a
+liberação das rotas `/api/*` com a Carven antes de afirmar validação real do envio.
+
+O cliente não segue redirecionamentos de API. Falha de login é diferenciada de
+inserção sem confirmação: o primeiro caso permite nova tentativa sem prender o
+pedido como envio incerto, até o limite de tentativas; o segundo aguarda
+reconciliação para evitar reinserção de uma venda possivelmente aceita.
+
+O portal autenticado oferece suporte pelo botão **Suporte** no menu e no cabeçalho
+móvel, pela bolha de chat e por **Falar sobre este pedido** na tela do pedido.
+A equipe responde em **Atendimento**, disponível para administradores. Os testes
+cobrem envio/resposta, não lidas, anexos e isolamento entre clientes.

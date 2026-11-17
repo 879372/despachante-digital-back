@@ -21,6 +21,7 @@ from . import servicos
 from .emails import enviar_links_por_placa
 from .integracao import infinitepay
 from .models import Cobranca, Pedido, Servico
+from .serializers import DadosServicoMixin
 from .validacoes import so_digitos, telefone_valido
 
 log = logging.getLogger("core.publico")
@@ -63,7 +64,7 @@ def servicos_publicos(request):
     qs = Servico.objects.filter(publico_ativo=True, preco_publico_centavos__gte=100)
     return Response([
         {"codigo": s.codigo, "nome": s.nome, "descricao": s.descricao, "preco_centavos": s.preco_publico_centavos,
-         "assincrono": s.assincrono}
+         "assincrono": s.assincrono, "formulario": s.formulario}
         for s in qs
     ])
 
@@ -110,7 +111,8 @@ def reenviar_links(request, placa):
 
 # --- Pagamento ------------------------------------------------------------------
 
-class PagarSerializer(serializers.Serializer):
+class PagarSerializer(DadosServicoMixin, serializers.Serializer):
+    dados = serializers.JSONField(required=False, write_only=True)
     servico = serializers.SlugRelatedField(slug_field="codigo", queryset=Servico.objects.filter(publico_ativo=True))
     placa = serializers.CharField(max_length=10)
     nome = serializers.CharField(min_length=3, max_length=150)
@@ -149,7 +151,7 @@ def pagar(request):
     ser.is_valid(raise_exception=True)
     d = ser.validated_data
     try:
-        c = servicos.iniciar_checkout_publico(d["servico"], d["placa"], d["nome"], d["email"], d["telefone"])
+        c = servicos.iniciar_checkout_publico(d["servico"], d["placa"], d["nome"], d["email"], d["telefone"], dados=d.get("dados"))
     except ValueError as exc:
         return Response({"detail": str(exc)}, status=400)
     except infinitepay.ErroCheckout as exc:

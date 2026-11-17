@@ -17,6 +17,7 @@ from rest_framework.throttling import UserRateThrottle
 from . import servicos
 from .integracao import infinitepay
 from .models import Cobranca, Servico
+from .serializers import NovoPedidoSerializer
 from .permissoes import EhAdmin
 
 log = logging.getLogger("core.pagamentos")
@@ -49,9 +50,9 @@ def _indisponivel():
                     status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
 
-class PagarPedidoSerializer(serializers.Serializer):
-    servico = serializers.SlugRelatedField(slug_field="codigo", queryset=Servico.objects.filter(ativo=True))
-    placa = serializers.CharField(max_length=10)
+
+class PagarPedidoSerializer(NovoPedidoSerializer):
+    pass
 
 
 @api_view(["POST"])
@@ -62,7 +63,7 @@ def pagar_pedido(request):
     ser = PagarPedidoSerializer(data=request.data)
     ser.is_valid(raise_exception=True)
     try:
-        c = servicos.iniciar_checkout_pedido(request.user, ser.validated_data["servico"], ser.validated_data["placa"])
+        c = servicos.iniciar_checkout_pedido(request.user, ser.validated_data["servico"], ser.validated_data["placa"], dados=ser.validated_data.get("dados"))
     except ValueError as exc:
         return Response({"detail": str(exc)}, status=400)
     except infinitepay.ErroCheckout as exc:

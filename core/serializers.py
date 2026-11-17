@@ -70,7 +70,7 @@ class ServicoSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Servico
-        fields = ["id", "codigo", "nome", "descricao", "preco_centavos", "assincrono"]
+        fields = ["id", "codigo", "nome", "descricao", "preco_centavos", "assincrono", "formulario"]
 
 
 class ServicoAdminSerializer(serializers.ModelSerializer):
@@ -118,7 +118,26 @@ class PedidoAdminSerializer(PedidoSerializer):
         return f"{obj.comprador_nome or 'Visitante'} (site)"
 
 
-class NovoPedidoSerializer(serializers.Serializer):
+class DadosServicoMixin:
+    def validate(self, dados):
+        from .comunicado import ComunicadoVendaSerializer
+        from .integracao.carven import configurado
+        dados = super().validate(dados)
+        servico = dados["servico"]
+        if servico.fonte == Servico.Fonte.COMUNICADO:
+            if not configurado():
+                raise serializers.ValidationError({"detail": "Serviço temporariamente indisponível."})
+            formulario = ComunicadoVendaSerializer(data=dados.get("dados") or {})
+            if not formulario.is_valid():
+                raise serializers.ValidationError({"dados": formulario.errors})
+            dados["dados"] = formulario.validated_data
+        else:
+            dados["dados"] = None
+        return dados
+
+
+class NovoPedidoSerializer(DadosServicoMixin, serializers.Serializer):
+    dados = serializers.JSONField(required=False, write_only=True)
     servico = serializers.SlugRelatedField(slug_field="codigo", queryset=Servico.objects.filter(ativo=True))
     placa = serializers.CharField(max_length=10)
 

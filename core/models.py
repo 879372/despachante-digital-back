@@ -78,8 +78,18 @@ class Servico(models.Model):
     nome = models.CharField(max_length=80)
     descricao = models.CharField(max_length=255, blank=True)
     preco_centavos = models.PositiveIntegerField(help_text="Preço de venda ao cliente")
-    # Dado interno: identificador do produto na fonte. Nunca é serializado.
+    class Fonte(models.TextChoices):
+        CONSULTA = "CONSULTA", "Consultas veiculares"
+        COMUNICADO = "COMUNICADO", "Comunicação de venda"
+
+    class Formulario(models.TextChoices):
+        PLACA = "PLACA", "Só a placa"
+        COMUNICADO_VENDA = "COMUNICADO_VENDA", "Comunicado de venda"
+
+    # Dados internos: qual fonte atende e o produto nela. Nunca são serializados.
+    fonte = models.CharField(max_length=12, choices=Fonte.choices, default=Fonte.CONSULTA)
     sku_fonte = models.CharField(max_length=80)
+    formulario = models.CharField(max_length=20, choices=Formulario.choices, default=Formulario.PLACA)
     assincrono = models.BooleanField(default=False, help_text="Emissão demorada (ex.: CRLV-e)")
     ativo = models.BooleanField(default=True, help_text="Disponível no painel dos despachantes")
     # Site público (cliente final, sem login)
@@ -128,12 +138,15 @@ class Pedido(models.Model):
     # Resultado já higienizado (sem referência à fonte)
     resultado = models.JSONField(null=True, blank=True)
     destaque = models.CharField(max_length=120, blank=True, help_text="Ex.: código de segurança")
+    # Formulário do serviço (ex.: comunicado de venda). O código de segurança do CRV é apagado após o envio.
+    dados_entrada = models.JSONField(null=True, blank=True)
     documento = models.FileField(upload_to=caminho_documentos, blank=True, max_length=200)
 
     # Controle interno da integração (nunca serializado)
     chave_idempotencia = models.CharField(max_length=64, unique=True)
     protocolo_fonte = models.CharField(max_length=80, blank=True, db_index=True)
     enviado = models.BooleanField(default=False, help_text="A fonte aceitou a solicitação")
+    envio_incerto = models.BooleanField(default=False, help_text="Envio sem resposta conclusiva; requer conferência antes de nova inserção")
     tentativas_envio = models.PositiveSmallIntegerField(default=0)
     custo_centavos = models.IntegerField(null=True, blank=True)
     cobrado_fonte = models.BooleanField(null=True)
@@ -236,6 +249,7 @@ class Cobranca(models.Model):
     comprador_email = models.EmailField(blank=True)
     comprador_telefone = models.CharField(max_length=20, blank=True)
     token_acesso = models.CharField(max_length=64, blank=True, help_text="Vira o token do pedido público")
+    dados_entrada = models.JSONField(null=True, blank=True, help_text="Formulário do serviço, usado ao criar o pedido")
     valor_centavos = models.PositiveIntegerField()
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.PENDENTE, db_index=True)
     # Para pagamento de consulta: o que emitir depois de pago

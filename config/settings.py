@@ -181,6 +181,20 @@ INFINITEPAY = {
     "VALIDADE_HORAS": int(env("INFINITEPAY_VALIDADE_HORAS", "2")),
 }
 
+# Até 2 anexos de 5 MB codificados em base64 no formulário de comunicado.
+DATA_UPLOAD_MAX_MEMORY_SIZE = 15 * 1024 * 1024
+
+# --- Comunicação de venda (segunda fonte; só backend) ---
+CARVEN = {
+    "URL": env("CARVEN_API_URL", "https://www.carven.com.br/api").rstrip("/"),
+    "CLIENT_ID": env("CARVEN_CLIENT_ID", ""),
+    "CLIENT_SECRET": env("CARVEN_CLIENT_SECRET", ""),
+    "TIMEOUT": int(env("CARVEN_TIMEOUT", "40")),
+    # URL pública do backend para o aviso de mudança de situação (vazio = só verificação periódica)
+    "WEBHOOK_BASE": env("CARVEN_WEBHOOK_BASE", env("INFINITEPAY_WEBHOOK_BASE", "")),
+    "WEBHOOK_TOKEN": env("CARVEN_WEBHOOK_TOKEN", ""),
+}
+
 # --- Login por e-mail ou usuário ---
 AUTHENTICATION_BACKENDS = ["core.autenticacao.EmailOuUsuarioBackend"]
 
